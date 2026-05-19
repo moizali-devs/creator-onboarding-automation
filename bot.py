@@ -2,8 +2,10 @@ import logging
 import os
 from pathlib import Path
 
+import aiohttp
 import discord
 from discord import app_commands
+from discord.ext import tasks
 from dotenv import load_dotenv
 
 
@@ -25,9 +27,88 @@ WELCOME_IMAGE_URL = os.getenv(
     "https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExcXlobmRxbzZkNTZ1Z2g0b2l1Y3ZkdXdpYnpybDRxeDA0NTB4OHlteiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3oKIPsx2VAYAgEHC12/giphy.gif",
 )
 
+EUKA_STORE_ID = os.getenv("EUKA_STORE_ID")
+LEADERBOARD_CHANNEL_ID = os.getenv("LEADERBOARD_CHANNEL_ID")
+LEADERBOARD_TOP_N = int(os.getenv("LEADERBOARD_TOP_N", "10"))
+
+EUKA_API_BASE = "https://app.euka.ai/api"
+EUKA_BRAND_ID = "8aea44dd-6461-44e4-9a63-90478f5f6991"
+
+# Medal emojis for top 3, numbers for the rest
+RANK_ICONS = {1: "🥇", 2: "🥈", 3: "🥉"}
+
 
 intents = discord.Intents.default()
 intents.members = True
+
+
+def _find_gmv_field(record: dict) -> tuple[str, float] | tuple[None, None]:
+    """Return (field_name, value) for the best GMV-like field in a creator record."""
+    for key in record:
+        if "gmv" in key.lower():
+            try:
+                return key, float(record[key] or 0)
+            except (TypeError, ValueError):
+                continue
+    return None, None
+
+
+def _gmv_sort_key(record: dict) -> float:
+    _, value = _find_gmv_field(record)
+    return value or 0.0
+
+
+async def fetch_creator_leaderboard() -> list[dict]:
+    """Fetch creator_level data from the Euka API and return sorted by GMV desc."""
+    if not EUKA_STORE_ID:
+        raise RuntimeError("EUKA_STORE_ID is not set.")
+
+    url = f"{EUKA_API_BASE}/data-export"
+    params = {"type": "creator_level", "store_id": EUKA_STORE_ID, "brand_id": EUKA_BRAND_ID, "export_type": "json"}
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=300)) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                raise RuntimeError(f"Euka API returned {resp.status}: {text[:200]}")
+            payload = await resp.json()
+
+    creators: list[dict] = payload.get("data", [])
+    creators.sort(key=_gmv_sort_key, reverse=True)
+    return creators
+
+
+def build_leaderboard_embed(creators: list[dict], top_n: int) -> discord.Embed:
+    embed = discord.Embed(
+        title="Creator Leaderboard",
+        description=f"Top {top_n} creators ranked by GMV",
+        color=discord.Color.from_rgb(255, 151, 42),
+    )
+
+    top = creators[:top_n]
+    if not top:
+        embed.description = "No creator data available."
+        return embed
+
+    # Detect the GMV field name from the first record
+    gmv_field, _ = _find_gmv_field(top[0])
+
+    lines = []
+    for rank, creator in enumerate(top, start=1):
+        icon = RANK_ICONS.get(rank, f"**{rank}.**")
+        handle = creator.get("creator_handle") or creator.get("handle") or "Unknown"
+        gmv_raw = creator.get(gmv_field) if gmv_field else None
+        try:
+            gmv = float(gmv_raw or 0)
+            gmv_str = f"${gmv:,.2f}"
+        except (TypeError, ValueError):
+            gmv_str = "N/A"
+
+        lines.append(f"{icon} `@{handle}` — {gmv_str}")
+
+    embed.add_field(name="Rankings", value="\n".join(lines), inline=False)
+    embed.set_footer(text="Updates every 24 hours • Powered by Euka")
+    return embed
 
 
 class CreatorOnboardingBot(discord.Client):
@@ -42,6 +123,46 @@ class CreatorOnboardingBot(discord.Client):
             await self.tree.sync()
             self._synced = True
             logging.info("Application commands synced")
+
+        if EUKA_STORE_ID and LEADERBOARD_CHANNEL_ID:
+            if not self.daily_leaderboard.is_running():
+                self.daily_leaderboard.start()
+                logging.info("Daily leaderboard task started")
+        else:
+            logging.warning("EUKA_STORE_ID or LEADERBOARD_CHANNEL_ID not set — leaderboard disabled")
+
+    @tasks.loop(hours=24)
+    async def daily_leaderboard(self) -> None:
+        await self._post_leaderboard_to_channel()
+
+    @daily_leaderboard.before_loop
+    async def before_daily_leaderboard(self) -> None:
+        await self.wait_until_ready()
+
+    async def _post_leaderboard_to_channel(self) -> None:
+        if not LEADERBOARD_CHANNEL_ID:
+            return
+
+        # Find the channel across all guilds
+        channel_id = int(LEADERBOARD_CHANNEL_ID)
+        channel = self.get_channel(channel_id)
+        if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+            logging.warning("Leaderboard channel %s not found or not a text channel", LEADERBOARD_CHANNEL_ID)
+            return
+
+        try:
+            creators = await fetch_creator_leaderboard()
+            embed = build_leaderboard_embed(creators, LEADERBOARD_TOP_N)
+            await channel.send(embed=embed)
+            logging.info("Leaderboard posted to channel %s (%d creators)", LEADERBOARD_CHANNEL_ID, len(creators))
+        except Exception as exc:
+            logging.error("Failed to post leaderboard: %s", exc)
+            await self._send_log_message(
+                channel.guild,
+                title="Leaderboard Post Failed",
+                description=f"Could not post the daily leaderboard: {exc}",
+                color=discord.Color.red(),
+            )
 
     async def on_member_join(self, member: discord.Member) -> None:
         channel = self._get_welcome_channel(member.guild)
@@ -105,6 +226,54 @@ class CreatorOnboardingBot(discord.Client):
                 ),
                 color=discord.Color.blurple(),
             )
+
+        @self.tree.command(name="leaderboard", description="Post the current creator leaderboard.")
+        @app_commands.checks.has_permissions(manage_guild=True)
+        @app_commands.describe(channel="Channel to post the leaderboard in (defaults to current channel).")
+        async def leaderboard(
+            interaction: discord.Interaction,
+            channel: discord.TextChannel | None = None,
+        ) -> None:
+            if interaction.guild is None:
+                await interaction.response.send_message("Run this command in a server.", ephemeral=True)
+                return
+
+            if not EUKA_STORE_ID:
+                await interaction.response.send_message(
+                    "EUKA_STORE_ID is not configured on this bot.", ephemeral=True
+                )
+                return
+
+            target_channel = channel or interaction.channel
+            if not isinstance(target_channel, (discord.TextChannel, discord.Thread)):
+                await interaction.response.send_message(
+                    "Choose a server text channel or thread.", ephemeral=True
+                )
+                return
+
+            await interaction.response.defer(ephemeral=True)
+
+            try:
+                creators = await fetch_creator_leaderboard()
+                embed = build_leaderboard_embed(creators, LEADERBOARD_TOP_N)
+                await target_channel.send(embed=embed)
+                await interaction.followup.send(
+                    f"Leaderboard posted to {target_channel.mention}.", ephemeral=True
+                )
+                await self._send_log_message(
+                    interaction.guild,
+                    title="Leaderboard Posted",
+                    description=(
+                        f"{interaction.user.mention} manually posted the creator leaderboard "
+                        f"in {target_channel.mention}."
+                    ),
+                    color=discord.Color.blurple(),
+                )
+            except Exception as exc:
+                logging.error("Leaderboard command failed: %s", exc)
+                await interaction.followup.send(
+                    f"Failed to fetch leaderboard data: {exc}", ephemeral=True
+                )
 
     async def _send_welcome_message(
         self,
