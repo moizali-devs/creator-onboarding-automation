@@ -32,7 +32,6 @@ LEADERBOARD_CHANNEL_ID = os.getenv("LEADERBOARD_CHANNEL_ID")
 LEADERBOARD_TOP_N = int(os.getenv("LEADERBOARD_TOP_N", "10"))
 
 EUKA_API_BASE = "https://app.euka.ai/api"
-EUKA_BRAND_ID = "8aea44dd-6461-44e4-9a63-90478f5f6991"
 
 # Medal emojis for top 3, numbers for the rest
 RANK_ICONS = {1: "🥇", 2: "🥈", 3: "🥉"}
@@ -64,7 +63,7 @@ async def fetch_creator_leaderboard() -> list[dict]:
         raise RuntimeError("EUKA_STORE_ID is not set.")
 
     url = f"{EUKA_API_BASE}/data-export"
-    params = {"type": "creator_level", "store_id": EUKA_STORE_ID, "brand_id": EUKA_BRAND_ID, "export_type": "json"}
+    params = {"type": "creator_level", "store_id": EUKA_STORE_ID, "export_type": "json"}
 
     async with aiohttp.ClientSession() as session:
         async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=300)) as resp:
@@ -79,9 +78,9 @@ async def fetch_creator_leaderboard() -> list[dict]:
 
 
 def build_leaderboard_embed(creators: list[dict], top_n: int) -> discord.Embed:
+    from datetime import datetime, timezone
     embed = discord.Embed(
-        title="Creator Leaderboard",
-        description=f"Top {top_n} creators ranked by GMV",
+        title="🏆  Creator Leaderboard",
         color=discord.Color.from_rgb(255, 151, 42),
     )
 
@@ -95,7 +94,7 @@ def build_leaderboard_embed(creators: list[dict], top_n: int) -> discord.Embed:
 
     lines = []
     for rank, creator in enumerate(top, start=1):
-        icon = RANK_ICONS.get(rank, f"**{rank}.**")
+        icon = RANK_ICONS.get(rank, f"`{rank}.`")
         handle = creator.get("creator_handle") or creator.get("handle") or "Unknown"
         gmv_raw = creator.get(gmv_field) if gmv_field else None
         try:
@@ -104,10 +103,11 @@ def build_leaderboard_embed(creators: list[dict], top_n: int) -> discord.Embed:
         except (TypeError, ValueError):
             gmv_str = "N/A"
 
-        lines.append(f"{icon} `@{handle}` — {gmv_str}")
+        lines.append(f"{icon}  **@{handle}**\n\u200b    └ GMV: **{gmv_str}**")
 
-    embed.add_field(name="Rankings", value="\n".join(lines), inline=False)
-    embed.set_footer(text="Updates every 24 hours • Powered by Euka")
+    embed.description = "\n".join(lines)
+    embed.set_footer(text=f"Top {top_n} creators by GMV  •  Updates every 24 hours")
+    embed.timestamp = datetime.now(timezone.utc)
     return embed
 
 
