@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:api.euka.ai)",
+      "Bash(source:*)",
+      "Bash(curl:*)"
+    ]
+  }
+}
