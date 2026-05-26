@@ -27,6 +27,8 @@ WELCOME_IMAGE_URL = os.getenv(
     "https://media3.giphy.com/media/v1.Y2lkPTc5MGI3NjExcXlobmRxbzZkNTZ1Z2g0b2l1Y3ZkdXdpYnpybDRxeDA0NTB4OHlteiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3oKIPsx2VAYAgEHC12/giphy.gif",
 )
 
+ROAD_TO_RETAINER_CHANNEL_ID = "1508891637365866517"
+
 EUKA_STORE_ID = os.getenv("EUKA_STORE_ID")
 LEADERBOARD_CHANNEL_ID = os.getenv("LEADERBOARD_CHANNEL_ID")
 LEADERBOARD_TOP_N = int(os.getenv("LEADERBOARD_TOP_N", "10"))
@@ -42,13 +44,18 @@ intents.members = True
 
 
 def _find_gmv_field(record: dict) -> tuple[str, float] | tuple[None, None]:
-    """Return (field_name, value) for the best GMV-like field in a creator record."""
-    for key in record:
-        if "gmv" in key.lower():
-            try:
-                return key, float(record[key] or 0)
-            except (TypeError, ValueError):
-                continue
+    """Return (field_name, value) for the best GMV-like field in a creator record.
+
+    Prefers shop-specific GMV (e.g. last_30d_gmv_our_shop) over cross-brand totals.
+    """
+    gmv_keys = [k for k in record if "gmv" in k.lower()]
+    # Prefer the shop-scoped field if present
+    preferred = [k for k in gmv_keys if k.lower().endswith("_our_shop")]
+    for key in (preferred or gmv_keys):
+        try:
+            return key, float(record[key] or 0)
+        except (TypeError, ValueError):
+            continue
     return None, None
 
 
@@ -292,6 +299,11 @@ class CreatorOnboardingBot(discord.Client):
             GET_STARTED_CHANNEL_ID,
             "lets-get-started",
         )
+        road_to_retainer_channel = self._channel_reference(
+            guild,
+            ROAD_TO_RETAINER_CHANNEL_ID,
+            "road-to-retainer",
+        )
 
         embed = discord.Embed(
             title=f"{member.display_name} Welcome to the PetLab Co. Creator Community",
@@ -315,6 +327,11 @@ class CreatorOnboardingBot(discord.Client):
                 f"Head over to {get_started_channel} to learn how to request your sample "
                 "and access the onboarding resources."
             ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Road to Retainer",
+            value=f"Check out {road_to_retainer_channel} to see how you can earn a retainer with PetLab Co.",
             inline=False,
         )
         if member.display_avatar:
