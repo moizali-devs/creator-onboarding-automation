@@ -65,12 +65,22 @@ def _gmv_sort_key(record: dict) -> float:
 
 
 async def fetch_creator_leaderboard() -> list[dict]:
-    """Fetch creator_level data from the Euka API and return sorted by GMV desc."""
+    """Fetch creator_level data for yesterday from the Euka API, sorted by GMV desc."""
     if not EUKA_STORE_ID:
         raise RuntimeError("EUKA_STORE_ID is not set.")
 
+    from datetime import date, timedelta
+    yesterday = date.today() - timedelta(days=1)
+    date_str = yesterday.isoformat()
+
     url = f"{EUKA_API_BASE}/data-export"
-    params = {"type": "creator_level", "store_id": EUKA_STORE_ID, "export_type": "json"}
+    params = {
+        "type": "creator_level",
+        "store_id": EUKA_STORE_ID,
+        "export_type": "json",
+        "start_date": date_str,
+        "end_date": date_str,
+    }
 
     async with aiohttp.ClientSession() as session:
         async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=300)) as resp:
@@ -85,9 +95,10 @@ async def fetch_creator_leaderboard() -> list[dict]:
 
 
 def build_leaderboard_embed(creators: list[dict], top_n: int) -> discord.Embed:
-    from datetime import datetime, timezone
+    from datetime import date, datetime, timedelta, timezone
+    yesterday = (date.today() - timedelta(days=1)).strftime("%B %d, %Y")
     embed = discord.Embed(
-        title="🏆  Creator Leaderboard",
+        title=f"🏆  Daily GMV Leaderboard  •  {yesterday}",
         color=discord.Color.from_rgb(255, 151, 42),
     )
 
@@ -113,7 +124,7 @@ def build_leaderboard_embed(creators: list[dict], top_n: int) -> discord.Embed:
         lines.append(f"{icon}  **@{handle}**\n\u200b    └ GMV: **{gmv_str}**")
 
     embed.description = "\n".join(lines)
-    embed.set_footer(text=f"Top {top_n} creators by GMV  •  Updates every 24 hours")
+    embed.set_footer(text=f"Top {top_n} creators by GMV yesterday  •  Posted daily")
     embed.timestamp = datetime.now(timezone.utc)
     return embed
 
