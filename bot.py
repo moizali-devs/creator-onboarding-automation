@@ -65,21 +65,21 @@ def _gmv_sort_key(record: dict) -> float:
 
 
 async def fetch_creator_leaderboard() -> list[dict]:
-    """Fetch creator_level data for yesterday from the Euka API, sorted by GMV desc."""
+    """Fetch creator_level data for the past 7 days from the Euka API, sorted by GMV desc."""
     if not EUKA_STORE_ID:
         raise RuntimeError("EUKA_STORE_ID is not set.")
 
     from datetime import date, timedelta
-    yesterday = date.today() - timedelta(days=1)
-    date_str = yesterday.isoformat()
+    end = date.today() - timedelta(days=1)
+    start = end - timedelta(days=6)
 
     url = f"{EUKA_API_BASE}/data-export"
     params = {
         "type": "creator_level",
         "store_id": EUKA_STORE_ID,
         "export_type": "json",
-        "start_date": date_str,
-        "end_date": date_str,
+        "start_date": start.isoformat(),
+        "end_date": end.isoformat(),
     }
 
     async with aiohttp.ClientSession() as session:
@@ -96,9 +96,11 @@ async def fetch_creator_leaderboard() -> list[dict]:
 
 def build_leaderboard_embed(creators: list[dict], top_n: int) -> discord.Embed:
     from datetime import date, datetime, timedelta, timezone
-    yesterday = (date.today() - timedelta(days=1)).strftime("%B %d, %Y")
+    end = date.today() - timedelta(days=1)
+    start = end - timedelta(days=6)
+    week_range = f"{start.strftime('%b %d')} – {end.strftime('%b %d, %Y')}"
     embed = discord.Embed(
-        title=f"🏆  Daily GMV Leaderboard  •  {yesterday}",
+        title=f"🏆  Weekly GMV Leaderboard  •  {week_range}",
         color=discord.Color.from_rgb(255, 151, 42),
     )
 
@@ -124,7 +126,7 @@ def build_leaderboard_embed(creators: list[dict], top_n: int) -> discord.Embed:
         lines.append(f"{icon}  **@{handle}**\n\u200b    └ GMV: **{gmv_str}**")
 
     embed.description = "\n".join(lines)
-    embed.set_footer(text=f"Top {top_n} creators by GMV yesterday  •  Posted daily")
+    embed.set_footer(text=f"Top {top_n} creators by GMV this week  •  Posted weekly")
     embed.timestamp = datetime.now(timezone.utc)
     return embed
 
@@ -149,7 +151,7 @@ class CreatorOnboardingBot(discord.Client):
         else:
             logging.warning("EUKA_STORE_ID or LEADERBOARD_CHANNEL_ID not set — leaderboard disabled")
 
-    @tasks.loop(hours=24)
+    @tasks.loop(hours=168)
     async def daily_leaderboard(self) -> None:
         await self._post_leaderboard_to_channel()
 
