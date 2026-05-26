@@ -312,7 +312,9 @@ class CreatorOnboardingBot(discord.Client):
                 "Welcome to the creator community behind PetLab Co., focused on helping pet parents discover trusted "
                 "products for their dogs.\n\n"
                 "Start by introducing yourself, then head to the onboarding channel to learn how to request your "
-                "sample, explore content ideas, and access the resources you need to get started with PetLab Co."
+                "sample, explore content ideas, and access the resources you need to get started with PetLab Co.\n\n"
+                "**We have a huge opportunity for affiliates to land a retainer with PetLab Co.** — "
+                "top-performing creators can move from affiliate to a paid retainer partnership."
             ),
             color=discord.Color.from_rgb(255, 151, 42),
         )
@@ -331,7 +333,7 @@ class CreatorOnboardingBot(discord.Client):
         )
         embed.add_field(
             name="Road to Retainer",
-            value=f"Check out {road_to_retainer_channel} to see how you can earn a retainer with PetLab Co.",
+            value=f"Head to {road_to_retainer_channel} to find out what it takes to land a paid retainer with PetLab Co.",
             inline=False,
         )
         if member.display_avatar:
